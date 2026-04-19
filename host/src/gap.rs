@@ -24,7 +24,7 @@ const DEVICE_NAME_MAX_LENGTH: usize = 22;
 /// GATT_SERVICE:                   + 1
 ///                                 ---
 ///                                 = 6 (or 8 with security+central)
-#[cfg(not(feature = "security"))]
+#[cfg(not(all(feature = "security", feature = "central")))]
 pub const GAP_SERVICE_ATTRIBUTE_COUNT: usize = 6;
 /// The number of attributes added by the GAP and GATT services (with security)
 #[cfg(all(feature = "security", feature = "central"))]
