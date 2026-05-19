@@ -128,6 +128,12 @@ pub enum GattConnectionEvent<'stack, 'server, P: PacketPool> {
     /// The peer has lost its bond.
     BondLost,
     #[cfg(feature = "security")]
+    /// The link is now encrypted.
+    Encrypted {
+        /// Security level achieved by the encryption.
+        security_level: SecurityLevel,
+    },
+    #[cfg(feature = "security")]
     /// OOB data is requested during pairing. Respond with [`GattConnection::provide_oob_data()`].
     OobRequest,
 }
@@ -148,9 +154,9 @@ impl<P: PacketPool> Drop for GattConnection<'_, '_, P> {
 impl<'stack, 'server, P: PacketPool> GattConnection<'stack, 'server, P> {
     /// Creates a GATT connection from the given BLE connection and `AttributeServer`:
     /// this will register the client within the server's CCCD table.
-    pub(crate) fn try_new<'values, M: RawMutex, const AT: usize, const CT: usize, const CN: usize>(
+    pub(crate) fn try_new<'values, M: RawMutex, const AT: usize, const CN: usize>(
         connection: Connection<'stack, P>,
-        server: &'server AttributeServer<'values, M, P, AT, CT, CN>,
+        server: &'server AttributeServer<'values, M, P, AT, CN>,
     ) -> Result<Self, Error> {
         trace!("[gatt {}] connecting to server", connection.handle().raw());
         server.connect(&connection)?;
@@ -257,6 +263,9 @@ impl<'stack, 'server, P: PacketPool> GattConnection<'stack, 'server, P> {
 
                 #[cfg(feature = "security")]
                 ConnectionEvent::BondLost => GattConnectionEvent::BondLost,
+
+                #[cfg(feature = "security")]
+                ConnectionEvent::Encrypted { security_level } => GattConnectionEvent::Encrypted { security_level },
 
                 #[cfg(feature = "security")]
                 ConnectionEvent::OobRequest => GattConnectionEvent::OobRequest,
@@ -394,6 +403,12 @@ impl<'stack, 'server, P: PacketPool> GattEvent<'stack, 'server, P> {
             AttClient::Request(AttReq::Read { .. }) | AttClient::Request(AttReq::ReadBlob { .. }) => {
                 GattEvent::Read(ReadEvent { data, server })
             }
+            #[cfg(feature = "att-queued-writes")]
+            AttClient::Request(AttReq::ExecuteWrite { flags, .. })
+                if flags == 0x01 && data.connection.with_prepare_write(|pw| pw.handle != 0) =>
+            {
+                GattEvent::Write(WriteEvent { data, server })
+            }
             _ => GattEvent::Other(OtherEvent { data, server }),
         }
     }
@@ -465,6 +480,36 @@ impl<'stack, P: PacketPool> ReadEvent<'stack, '_, P> {
         process(&mut self.data, self.server, Ok(()))
     }
 
+    /// Accept the event without server processing.
+    pub fn accept_unprocessed<T: AsGatt + ?Sized>(mut self, data: &T) -> Result<Reply<'stack, P>, Error> {
+        let (rsp, offset) = match self.data.incoming() {
+            AttClient::Request(AttReq::Read { .. }) => (att::ATT_READ_RSP, 0),
+            AttClient::Request(AttReq::ReadBlob { offset, .. }) => (att::ATT_READ_BLOB_RSP, offset as usize),
+            _ => unreachable!(),
+        };
+        self.data.pdu = None;
+
+        let mut tx = P::allocate().ok_or(Error::OutOfMemory)?;
+        let mut w = WriteCursor::new(tx.as_mut());
+        let (mut header, mut payload) = w.split(4)?;
+        // Limit the buffer given to process() so that multi-entry ATT responses
+        // (ReadByType, ReadByGroupType, FindInformation) are bounded by the
+        // negotiated ATT MTU. Without this, entries are written into the full
+        // packet-pool buffer and then post-hoc truncated, which can split an
+        // entry in half and produce a malformed PDU.
+        let mtu = self.data.connection.get_att_mtu() as usize;
+        let len = payload.len().saturating_sub(offset).min(mtu - 1);
+
+        payload.write(rsp)?;
+        payload.append(&data.as_gatt()[offset..][..len])?;
+        header.write(payload.len() as u16)?;
+        header.write(4_u16)?;
+
+        let len = header.len() + payload.len();
+        let pdu = Pdu::new(tx, len);
+        Ok(Reply::new(self.data.connection.clone(), Some(pdu)))
+    }
+
     /// Reject the event with the provided error code, it will not be processed by the attribute server.
     pub fn reject(mut self, err: AttErrorCode) -> Result<Reply<'stack, P>, Error> {
         process(&mut self.data, self.server, Err(err))
@@ -504,20 +549,53 @@ pub struct WriteEvent<'stack, 'server, P: PacketPool> {
 impl<'stack, P: PacketPool> WriteEvent<'stack, '_, P> {
     /// Characteristic handle that was written
     pub fn handle(&self) -> u16 {
-        // We know that the unwrap cannot fail, because `ReadEvent` wraps
-        // ATT payloads that always do have a handle
-        unwrap!(self.data.handle())
+        match self.data.incoming() {
+            AttClient::Request(AttReq::Write { handle, .. }) | AttClient::Command(AttCmd::Write { handle, .. }) => {
+                handle
+            }
+            #[cfg(feature = "att-queued-writes")]
+            AttClient::Request(AttReq::ExecuteWrite { .. }) => self.data.connection.with_prepare_write(|pw| pw.handle),
+            _ => unreachable!(),
+        }
     }
 
     /// Raw data to be written
-    pub fn data(&self) -> &[u8] {
-        // Note: write event data is always at offset 3, right?
-        &self.data.pdu.as_ref().unwrap().as_ref()[3..]
+    pub fn with_data<R>(&self, f: impl FnOnce(usize, &[u8]) -> R) -> R {
+        match self.data.incoming() {
+            AttClient::Request(AttReq::Write { data, .. }) | AttClient::Command(AttCmd::Write { data, .. }) => {
+                f(0, data)
+            }
+            #[cfg(feature = "att-queued-writes")]
+            AttClient::Request(AttReq::ExecuteWrite { .. }) => self.data.connection.with_prepare_write(|pw| {
+                let data = &pw.buf[..pw.len as usize];
+                f(usize::from(pw.offset), data)
+            }),
+            _ => unreachable!(),
+        }
     }
 
     /// Characteristic data to be written
     pub fn value<T: FromGatt>(&self, _c: &Characteristic<T>) -> Result<T, FromGattError> {
-        T::from_gatt(self.data())
+        self.with_data(|offset, data| {
+            if offset == 0 {
+                T::from_gatt(data)
+            } else {
+                Err(FromGattError::InvalidLength)
+            }
+        })
+    }
+
+    /// Validate the offset and length of the write request against the attribute's `len` and `capacity`
+    pub fn validate(&self, len: usize, capacity: usize) -> Result<(), AttErrorCode> {
+        self.with_data(|offset, data| {
+            if offset > len {
+                Err(AttErrorCode::INVALID_OFFSET)
+            } else if offset + data.len() > capacity {
+                Err(AttErrorCode::INVALID_ATTRIBUTE_VALUE_LENGTH)
+            } else {
+                Ok(())
+            }
+        })
     }
 
     /// Accept the event, making it processed by the server.
@@ -525,6 +603,35 @@ impl<'stack, P: PacketPool> WriteEvent<'stack, '_, P> {
     /// Automatically called if drop() is invoked.
     pub fn accept(mut self) -> Result<Reply<'stack, P>, Error> {
         process(&mut self.data, self.server, Ok(()))
+    }
+
+    /// Accept the event without server processing.
+    pub fn accept_unprocessed(mut self) -> Result<Reply<'stack, P>, Error> {
+        let rsp = match self.data.incoming() {
+            AttClient::Request(AttReq::Write { .. }) => Some(att::ATT_WRITE_RSP),
+            AttClient::Command(AttCmd::Write { .. }) => None,
+            #[cfg(feature = "att-queued-writes")]
+            AttClient::Request(AttReq::ExecuteWrite { .. }) => {
+                self.data.connection.clear_prepare_write();
+                Some(att::ATT_EXECUTE_WRITE_RSP)
+            }
+            _ => unreachable!(),
+        };
+
+        self.data.pdu = None;
+
+        if let Some(rsp) = rsp {
+            let mut tx = P::allocate().ok_or(Error::OutOfMemory)?;
+            let mut w = WriteCursor::new(tx.as_mut());
+            w.write(1_u16)?;
+            w.write(4_u16)?;
+            w.write(rsp)?;
+            let len = w.len();
+            let pdu = Pdu::new(tx, len);
+            Ok(Reply::new(self.data.connection.clone(), Some(pdu)))
+        } else {
+            Ok(Reply::new(self.data.connection.clone(), None))
+        }
     }
 
     /// Reject the event with the provided error code, it will not be processed by the attribute server.
@@ -1824,7 +1931,6 @@ mod tests {
 
         const MAX_ATTRIBUTES: usize = 64;
         const CONNECTIONS_MAX: usize = 3;
-        const CLIENT_ATT_BYTES: usize = 64;
         const NUM_CHARACTERISTICS: u8 = 9;
         const ATT_MTU: u16 = 185;
 
@@ -1851,8 +1957,7 @@ mod tests {
             }
         }
 
-        let server =
-            AttributeServer::<_, DefaultPacketPool, MAX_ATTRIBUTES, CLIENT_ATT_BYTES, CONNECTIONS_MAX>::new(table);
+        let server = AttributeServer::<_, DefaultPacketPool, MAX_ATTRIBUTES, CONNECTIONS_MAX>::new(table);
 
         // Set up a connection with ATT MTU = 185 (typical iOS value)
         let mgr = setup();
@@ -1928,8 +2033,6 @@ mod tests {
 
         const MAX_ATTRIBUTES: usize = 16;
         const CONNECTIONS_MAX: usize = 3;
-        const CLIENT_ATT_BYTES: usize = 16;
-
         let mut table: AttributeTable<'_, NoopRawMutex, MAX_ATTRIBUTES> = AttributeTable::new();
         let mut storage = [0u8; 1];
         let characteristic: Characteristic<u8> = table
@@ -1943,8 +2046,7 @@ mod tests {
                 &mut storage[..],
             )
             .build();
-        let server =
-            AttributeServer::<_, DefaultPacketPool, MAX_ATTRIBUTES, CLIENT_ATT_BYTES, CONNECTIONS_MAX>::new(table);
+        let server = AttributeServer::<_, DefaultPacketPool, MAX_ATTRIBUTES, CONNECTIONS_MAX>::new(table);
 
         let mgr = setup();
         assert!(mgr.poll_accept(LeConnRole::Peripheral, &[], None).is_pending());
@@ -1966,7 +2068,7 @@ mod tests {
         match event {
             GattEvent::Write(write) => {
                 assert_eq!(write.handle(), characteristic.handle);
-                assert_eq!(write.data(), &payload);
+                write.with_data(|_, data| assert_eq!(data, &payload));
                 let reply = write.accept().unwrap();
                 assert!(
                     reply.att_payload().is_none(),

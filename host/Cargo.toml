@@ -14,7 +14,7 @@ repository = "https://github.com/embassy-rs/trouble"
 [package.metadata.embassy_docs]
 src_base = "https://github.com/embassy-rs/trouble-host/blob/v$VERSION/src/"
 src_base_git = "https://github.com/embassy-rs/trouble-host/blob/$COMMIT/src/"
-features = ["defmt", "peripheral", "central", "gatt", "scan", "derive"]
+features = ["defmt", "peripheral", "central", "gatt", "scan", "derive", "security"]
 target = "thumbv7em-none-eabi"
 
 [dependencies]
@@ -178,6 +178,17 @@ gatt-client-notification-queue-size-64 = []
 gatt-client-notification-queue-size-128 = []
 gatt-client-notification-queue-size-256 = []
 gatt-client-notification-queue-size-512 = []
+
+# Maximum buffer size per connection for client-specific attribute values, such as CCCDs.
+client-att-table-size-2 = []
+client-att-table-size-8 = []
+client-att-table-size-16 = []
+client-att-table-size-32 = []
+client-att-table-size-64 = [] # Default
+client-att-table-size-128 = []
+client-att-table-size-256 = []
+client-att-table-size-512 = []
+client-att-table-size-1024 = []
 
 # Maximum buffer size per connection for ATT queued writes.
 prepare-write-buffer-size-64 = []

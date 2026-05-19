@@ -274,6 +274,14 @@ pub enum ConnectionEvent {
     /// The peer has lost its bond (received pairing request for a bonded peer).
     BondLost,
     #[cfg(feature = "security")]
+    /// The link is now encrypted. Fires once per encryption-enable transition,
+    /// for both fresh pairings and resumed bonded sessions. For pairings, this
+    /// fires alongside `PairingComplete`.
+    Encrypted {
+        /// Security level achieved by the encryption.
+        security_level: SecurityLevel,
+    },
+    #[cfg(feature = "security")]
     /// OOB data is requested during pairing. Respond with [`Connection::provide_oob_data()`].
     OobRequest,
 }
@@ -905,16 +913,9 @@ impl<'stack, P: PacketPool> Connection<'stack, P> {
 
     /// Transform BLE connection into a `GattConnection`
     #[cfg(feature = "gatt")]
-    pub fn with_attribute_server<
-        'values,
-        'server,
-        M: RawMutex,
-        const ATT_MAX: usize,
-        const CLIENT_ATT_BYTES: usize,
-        const CONN_MAX: usize,
-    >(
+    pub fn with_attribute_server<'values, 'server, M: RawMutex, const ATT_MAX: usize, const CONN_MAX: usize>(
         self,
-        server: &'server AttributeServer<'values, M, P, ATT_MAX, CLIENT_ATT_BYTES, CONN_MAX>,
+        server: &'server AttributeServer<'values, M, P, ATT_MAX, CONN_MAX>,
     ) -> Result<GattConnection<'stack, 'server, P>, Error> {
         GattConnection::try_new(self, server)
     }

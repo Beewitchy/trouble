@@ -659,9 +659,13 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
         debug!("exchange_att_mtu: {}, current default: {}", mtu, state.default_att_mtu);
         let default_att_mtu = state.default_att_mtu;
         core::mem::drop(state);
+        // Both states are live link-layer connections; the transition
+        // to `Connected` is just the application polling `accept()` and
+        // is unrelated to ATT activity. `handle_acl` already accepts
+        // both via `connection_by_handle_mut`.
         for storage in self.connections.borrow_mut().iter_mut() {
             match storage.state {
-                ConnectionState::Connected if storage.handle.unwrap() == conn => {
+                ConnectionState::Connecting | ConnectionState::Connected if storage.handle.unwrap() == conn => {
                     storage.att_mtu = default_att_mtu.min(mtu);
                     return storage.att_mtu;
                 }
@@ -892,11 +896,9 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
     ) -> Result<(), crate::BleHostError<C::Error>>
     where
         C: crate::ControllerCmdSync<bt_hci::cmd::le::LeLongTermKeyRequestReply>
-            + crate::ControllerCmdAsync<bt_hci::cmd::le::LeEnableEncryption>
-            + crate::ControllerCmdSync<bt_hci::cmd::link_control::Disconnect>,
+            + crate::ControllerCmdAsync<bt_hci::cmd::le::LeEnableEncryption>,
     {
         use bt_hci::cmd::le::{LeEnableEncryption, LeLongTermKeyRequestReply};
-        use bt_hci::cmd::link_control::Disconnect;
 
         match _event {
             crate::security_manager::SecurityEventData::SendLongTermKey(handle, ediv, rand) => {
@@ -922,9 +924,7 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
                     } else {
                         warn!("[host] Long term key request reply failed, no long term key");
                         // Send disconnect event to the controller
-                        host.command(Disconnect::new(handle, DisconnectReason::AuthenticationFailure))
-                            .await?;
-                        unwrap!(self.disconnected(handle, Status::AUTHENTICATION_FAILURE));
+                        self.request_handle_disconnect(handle, DisconnectReason::AuthenticationFailure);
                     }
                 } else {
                     warn!("[host] Long term key request reply failed, unknown peer")
