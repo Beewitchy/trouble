@@ -107,9 +107,9 @@ dependencies = [
 
 [[package]]
 name = "bt-hci"
-version = "0.8.1"
+version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "211713d2e9fb4793ce4360a712c0764264aff6be48932ccf02ca2a331c0436a9"
+checksum = "8f3c66fd0a41a3b3a5906847b1bf5516048ce083e24fa9341a0fa31d3b4cd73d"
 dependencies = [
  "btuuid",
  "defmt 1.0.1",
@@ -1071,7 +1071,7 @@ dependencies = [
 [[package]]
 name = "nrf-mpsl"
 version = "0.3.0"
-source = "git+https://github.com/alexmoon/nrf-sdc.git?rev=69744a721ec59e985b2c557937eae01593c1997b#69744a721ec59e985b2c557937eae01593c1997b"
+source = "git+https://github.com/alexmoon/nrf-sdc.git?rev=e1fbb89a173dfc053ec4877d366f51804eac498d#e1fbb89a173dfc053ec4877d366f51804eac498d"
 dependencies = [
  "cfg-if",
  "cortex-m",
@@ -1088,7 +1088,7 @@ dependencies = [
 [[package]]
 name = "nrf-mpsl-sys"
 version = "0.2.1"
-source = "git+https://github.com/alexmoon/nrf-sdc.git?rev=69744a721ec59e985b2c557937eae01593c1997b#69744a721ec59e985b2c557937eae01593c1997b"
+source = "git+https://github.com/alexmoon/nrf-sdc.git?rev=e1fbb89a173dfc053ec4877d366f51804eac498d#e1fbb89a173dfc053ec4877d366f51804eac498d"
 dependencies = [
  "bindgen",
  "doxygen-rs",
@@ -1107,7 +1107,7 @@ dependencies = [
 [[package]]
 name = "nrf-sdc"
 version = "0.4.0"
-source = "git+https://github.com/alexmoon/nrf-sdc.git?rev=69744a721ec59e985b2c557937eae01593c1997b#69744a721ec59e985b2c557937eae01593c1997b"
+source = "git+https://github.com/alexmoon/nrf-sdc.git?rev=e1fbb89a173dfc053ec4877d366f51804eac498d#e1fbb89a173dfc053ec4877d366f51804eac498d"
 dependencies = [
  "bt-hci",
  "critical-section",
@@ -1124,7 +1124,7 @@ dependencies = [
 [[package]]
 name = "nrf-sdc-sys"
 version = "0.2.1"
-source = "git+https://github.com/alexmoon/nrf-sdc.git?rev=69744a721ec59e985b2c557937eae01593c1997b#69744a721ec59e985b2c557937eae01593c1997b"
+source = "git+https://github.com/alexmoon/nrf-sdc.git?rev=e1fbb89a173dfc053ec4877d366f51804eac498d#e1fbb89a173dfc053ec4877d366f51804eac498d"
 dependencies = [
  "bindgen",
  "doxygen-rs",
@@ -1667,8 +1667,8 @@ dependencies = [
  "embassy-time",
  "embedded-hal-async",
  "embedded-storage-async",
+ "fixed",
  "heapless 0.9.2",
- "rand_core 0.6.4",
  "sequential-storage",
  "serde",
  "static_cell",
@@ -1677,7 +1677,7 @@ dependencies = [
 
 [[package]]
 name = "trouble-host"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "aes",
  "bt-hci",
@@ -1701,7 +1701,7 @@ dependencies = [
 
 [[package]]
 name = "trouble-host-macros"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "convert_case",
  "darling",
@@ -1729,9 +1729,6 @@ dependencies = [
  "nrf-mpsl",
  "nrf-sdc",
  "panic-probe",
- "rand",
- "rand_chacha",
- "rand_core 0.6.4",
  "static_cell",
  "trouble-example-apps",
  "trouble-host",

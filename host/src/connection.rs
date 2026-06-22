@@ -7,8 +7,8 @@ use bt_hci::cmd::le::{
 use bt_hci::cmd::status::ReadRssi;
 use bt_hci::controller::{ControllerCmdAsync, ControllerCmdSync};
 use bt_hci::param::{
-    AllPhys, ConnHandle, DisconnectReason, FrameSpaceInitiator, LeConnRole, PhyKind, PhyMask, PhyOptions, SpacingTypes,
-    Status,
+    AllPhys, ConnHandle, DisconnectReason, FilterDuplicates, FrameSpaceInitiator, LeConnRole, PhyKind, PhyMask,
+    PhyOptions, SpacingTypes, Status,
 };
 #[cfg(feature = "connection-params-update")]
 use bt_hci::{
@@ -19,9 +19,9 @@ use bt_hci::{
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_time::Duration;
 
-use crate::connection_manager::ConnectionManager;
 #[cfg(feature = "connection-metrics")]
 pub use crate::connection_manager::Metrics as ConnectionMetrics;
+use crate::connection_manager::{ConnectionManager, ConnectionState};
 use crate::pdu::Pdu;
 #[cfg(feature = "gatt")]
 use crate::prelude::{AttributeServer, GattConnection};
@@ -80,6 +80,8 @@ pub struct ScanConfig<'d> {
     pub window: Duration,
     /// Scan timeout.
     pub timeout: Duration,
+    /// Duplicate advertising filtering.
+    pub filter_duplicates: FilterDuplicates,
 }
 
 impl Default for ScanConfig<'_> {
@@ -91,6 +93,7 @@ impl Default for ScanConfig<'_> {
             interval: Duration::from_secs(1),
             window: Duration::from_secs(1),
             timeout: Duration::from_secs(0),
+            filter_duplicates: FilterDuplicates::Disabled,
         }
     }
 }
@@ -280,6 +283,8 @@ pub enum ConnectionEvent {
     Encrypted {
         /// Security level achieved by the encryption.
         security_level: SecurityLevel,
+        /// Bond information if encryption was achieved using a stored bond.
+        bond: Option<BondInformation>,
     },
     #[cfg(feature = "security")]
     /// OOB data is requested during pairing. Respond with [`Connection::provide_oob_data()`].
@@ -504,12 +509,24 @@ impl<'stack, P: PacketPool> Connection<'stack, P> {
         Self { index, manager }
     }
 
+    pub(crate) fn manager(&self) -> &ConnectionManager<'stack, P> {
+        self.manager
+    }
+
+    pub(crate) fn index(&self) -> u8 {
+        self.index
+    }
+
     pub(crate) fn set_att_mtu(&self, mtu: u16) {
         self.manager.set_att_mtu(self.index, mtu);
     }
 
     pub(crate) fn get_att_mtu(&self) -> u16 {
         self.manager.get_att_mtu(self.index)
+    }
+
+    pub(crate) fn is_att_mtu_exchanged(&self) -> bool {
+        self.manager.is_att_mtu_exchanged(self.index)
     }
 
     pub(crate) fn set_l2cap_listening(&self, listening: bool) {
@@ -541,6 +558,25 @@ impl<'stack, P: PacketPool> Connection<'stack, P> {
     #[cfg(feature = "gatt")]
     pub(crate) async fn next_gatt_client(&self) -> Option<Pdu<P::Packet>> {
         self.manager.next_gatt_client(self.index).await
+    }
+
+    #[cfg(feature = "gatt")]
+    pub(crate) async fn acquire_indication_slot(&self) -> Result<(), Error> {
+        self.manager.acquire_indication_slot(self.index).await
+    }
+
+    #[cfg(feature = "gatt")]
+    pub(crate) fn release_indication_slot(&self) {
+        self.manager.release_indication_slot(self.index)
+    }
+
+    #[cfg(feature = "gatt")]
+    pub(crate) async fn wait_indication_confirmation(&self) -> Result<(), Error> {
+        self.manager.wait_indication_confirmation(self.index).await
+    }
+
+    pub(crate) fn state(&self) -> ConnectionState {
+        self.manager.state(self.index)
     }
 
     /// Check if still connected
