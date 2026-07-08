@@ -50,7 +50,7 @@ use bt_hci::{ControllerToHostPacket, FromHciBytes, WriteHci};
 use embassy_futures::select::{select3, select5, Either3, Either5};
 #[cfg(any(feature = "scan", feature = "security"))]
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
-#[cfg(feature = "security"))]
+#[cfg(feature = "security")]
 use embassy_sync::mutex::Mutex;
 use embassy_sync::once_lock::OnceLock;
 #[cfg(feature = "scan")]
