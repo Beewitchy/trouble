@@ -491,6 +491,27 @@ pub struct Connection<'stack, P: PacketPool> {
     manager: &'stack ConnectionManager<'stack, P>,
 }
 
+impl<P: PacketPool> core::fmt::Debug for Connection<'_, P> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_tuple("Connection").field(&self.index).finish()
+    }
+}
+
+#[cfg(feature = "defmt")]
+impl<P: PacketPool> defmt::Format for Connection<'_, P> {
+    fn format(&self, f: defmt::Formatter) {
+        defmt::write!(f, "Connection({})", self.index)
+    }
+}
+
+impl<P: PacketPool> PartialEq for Connection<'_, P> {
+    fn eq(&self, other: &Self) -> bool {
+        self.index == other.index && core::ptr::eq(self.manager, other.manager)
+    }
+}
+
+impl<P: PacketPool> Eq for Connection<'_, P> {}
+
 impl<P: PacketPool> Clone for Connection<'_, P> {
     fn clone(&self) -> Self {
         self.manager.inc_ref(self.index);
@@ -857,7 +878,7 @@ impl<'stack, P: PacketPool> Connection<'stack, P> {
         if self.role() == LeConnRole::Peripheral || cfg!(feature = "connection-params-update") {
             use crate::types::l2cap::ConnParamUpdateReq;
             // Use L2CAP signaling to update connection parameters
-            info!(
+            debug!(
                 "Connection parameters request procedure not supported, use l2cap connection parameter update req instead"
             );
             let interval_min: bt_hci::param::Duration<1_250> = bt_hci_duration(params.min_connection_interval);

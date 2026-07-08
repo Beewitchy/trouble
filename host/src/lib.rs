@@ -42,6 +42,8 @@ mod command;
 pub mod config;
 mod connection_manager;
 mod cursor;
+#[cfg(feature = "iso")]
+pub mod iso;
 #[cfg(feature = "default-packet-pool")]
 mod packet_pool;
 mod pdu;
@@ -97,6 +99,8 @@ pub mod prelude {
     #[cfg(feature = "gatt")]
     pub use crate::gatt::*;
     pub use crate::host::{ControlRunner, EventHandler, HostMetrics, Runner, RxRunner, TxRunner};
+    #[cfg(feature = "iso")]
+    pub use crate::iso::Iso;
     pub use crate::l2cap::*;
     #[cfg(feature = "default-packet-pool")]
     pub use crate::packet_pool::DefaultPacketPool;
@@ -764,7 +768,7 @@ impl<'stack, C: Controller, P: PacketPool> StackBuilder<'stack, C, P> {
 
     /// Enable BLE address privacy with the given Identity Resolving Key (IRK).
     ///
-    /// When privacy is enabled, the controller generates Resolvable Private Addresses (RPAs)
+    /// When privacy is enabled, Resolvable Private Addresses (RPAs) are generated
     /// that rotate periodically, preventing device tracking while allowing bonded peers to
     /// resolve the device's identity.
     ///
@@ -783,7 +787,10 @@ impl<'stack, C: Controller, P: PacketPool> StackBuilder<'stack, C, P> {
 
     /// Set the RPA (Resolvable Private Address) rotation timeout.
     ///
-    /// The controller will automatically generate a new RPA after this duration.
+    /// New RPAs will be generated after this duration. Note that host generated RPAs
+    /// (used for active scanning of and connecting to unbonded devices) will only rotate
+    /// when scanning, connection initiation, and legacy advertising are all idle.
+    ///
     /// Default is 900 seconds (15 minutes) per the BLE specification.
     #[cfg(feature = "security")]
     pub fn set_rpa_timeout(mut self, timeout: Duration) -> Self {
@@ -860,6 +867,14 @@ impl<'stack, C: Controller, P: PacketPool> Stack<'stack, C, P> {
     #[cfg(feature = "peripheral")]
     pub fn peripheral(&self) -> Peripheral<'_, C, P> {
         Peripheral::new(self.host)
+    }
+
+    /// Obtain an [`Iso`](iso::Iso) handle for isochronous-stream (CIS/BIS) HCI commands and data.
+    ///
+    /// This is a lightweight handle that can be created multiple times.
+    #[cfg(feature = "iso")]
+    pub fn iso(&self) -> iso::Iso<'_, C, P> {
+        iso::Iso::new(self.host)
     }
 
     /// Set the IO capabilities used by the security manager.
